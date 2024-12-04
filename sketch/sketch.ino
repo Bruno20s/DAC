@@ -1,341 +1,342 @@
 #include <EEPROM.h>
 #include <LiquidCrystal_I2C.h>
 
-// pinos para o LCD 
+// Pins for LCD
 LiquidCrystal_I2C lcd(0x27,16,2);
 
-// Unir os pinos dos botões para A e B
-const int pinosBotoes[2][4] = {{7, 8, 9, 10}, // Lado A: Eixo1, Eixo2, RodDupla1, RodDupla2
-                               {6, 5, 4, 3}}; // Lado B: Eixo1, Eixo2, RodDupla1, RodDupla2
+// Combine the sensor pins for Side A and Side B
+const int sensorPins[2][4] = {{7, 8, 9, 10}, // Side A: Axis1, Axis2, DW1, DW2
+                              {6, 5, 4, 3}}; // Side B: Axis1, Axis2, DW1, DW2
 
-const int interruptorDMM = 11;
-const int interruptorBO = 2;
-const int led = 13;
+const int switchDMM = 11;
+const int switchBO = 2;
+const int ledPin = 13;
 
-const int enderecosEixos[2][3] = {{0, 2, 4},  // Endereços EEPROM para A: Eixo1, Eixo2, RodagemDupla
-                                  {6, 8, 10}}; // Endereços EEPROM para B: Eixo1, Eixo2, RodagemDupla
+const int axisAddresses[2][3] = {{0, 2, 4},  // EEPROM addresses for Side A: Axis1, Axis2, Double Wheels
+                                 {6, 8, 10}}; // EEPROM addresses for Side B: Axis1, Axis2, Double Wheels
 
-int enderecoDistanciaSensores = 12; // Endereço na EEPROM
-int enderecoVelocidadeSerial = 14;
+int sensorDistanceAddress = 12; // Address in EEPROM
+int serialSpeedAddress = 14;
 
-float distanciaSensores = 0.4;
-int velocidadeSerial = 9600; // Velocidade inicial da porta serial
-int opcao = 3; // Valor inicial
+float sensorDistance = 0.4;
+int serialSpeed = 9600; // Initial serial port speed
+int option = 3; // Initial value
 
-// Estados e contadores
-int sistemaAtivo = 0;
-int ultimoSistemaAtivo = LOW;
-unsigned long inicioTempoInterruptor = 0;
-unsigned long duracaoInterruptor = 0;
+// States and counters
+int systemActive = 0;
+int lastSystemActive = LOW;
+unsigned long switchStartTime = 0;
+unsigned long switchDuration = 0;
 
-// Estados dos botões e tempos
-int estadosBotoes[2][4] = {{LOW, LOW, LOW, LOW}, {LOW, LOW, LOW, LOW}};
-unsigned long temposBotoes[2][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}};
+// Sensor states and timings
+int sensorStates[2][4] = {{LOW, LOW, LOW, LOW}, {LOW, LOW, LOW, LOW}};
+unsigned long sensorTimings[2][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}};
 
-// Contadores
-int contadoresEixos[2][2] = {{0, 0}, {0, 0}};  // Eixos 1 e 2 para A e B
-int contadoresRodagemDupla[2] = {0, 0};        // Rodagem dupla para A e B
+// Counters
+int axisCounters[2][2] = {{0, 0}, {0, 0}};  // Axis 1 and 2 for Side A and Side B
+int doubleWheelCounters[2] = {0, 0};        // Double wheels for Side A and Side B
 
-int contagemBotoes[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // Para botões 1, 2, 3, 4, 7, 8, 9, 0
+int sensorCount[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // For sensors 1, 2, 3, 4, 7, 8, 9, 0
 
-bool rodagemDuplaDetectada[2] = {false, false};  // A e B
-bool velocidadeComBotaoRodDupla[2][2] = {{false, false}, {false, false}};  // A e B: RodDupla1, RodDupla2
+bool doubleWheelDetected[2] = {false, false};  // Side A and Side B
+bool speedWithDoubleWheelSensor[2][2] = {{false, false}, {false, false}};  // Side A and B: DW1, DW2
 
-int estadoSequencia[2] = {0, 0};  // Estado de sequência para A e B
+int sequenceState[2] = {0, 0};  // Sequence state for Side A and Side B
 
-bool retrocessoDetectado = false;
-bool velocidadeExibida = false;
+bool reverseDetected = false;
+bool speedDisplayed = false;
 
-// Arrays para debounce
-unsigned long ultimoTempoBotao[2][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}};
-unsigned long tempoDebounce = 50;
+// Arrays for debounce
+unsigned long lastSensorTime[2][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}};
+unsigned long debounceTime = 50;
 
 void setup() {
-  lcd.begin (16,2);
+  lcd.begin(16, 2);
   lcd.backlight();
-  lcd.print("Sistema Iniciado"); // Exibe uma mensagem inicial
-  delay(3000); // Mostra a mensagem por 3 segundos
-  lcd.clear(); // Limpa o display
+  lcd.setCursor(0, 0); // Sets the cursor to the top row
+  lcd.print("System"); // Displays "System" on the top row
+  lcd.setCursor(0, 1); // Sets the cursor to the Sensor row
+  lcd.print("Initialized"); // Displays "Initialized" on the Sensor row
+  delay(3000); // Shows the message for 3 seconds
+  lcd.clear(); // Clears the display
 
-  pinMode(led, OUTPUT);
-  pinMode(interruptorBO, INPUT_PULLUP);
-  pinMode(interruptorDMM, INPUT_PULLUP);
+  pinMode(ledPin, OUTPUT);
+  pinMode(switchBO, INPUT_PULLUP);
+  pinMode(switchDMM, INPUT_PULLUP);
 
-  for (int lado = 0; lado < 2; lado++) {
+  for (int side = 0; side < 2; side++) {
     for (int i = 0; i < 4; i++) {
-      pinMode(pinosBotoes[lado][i], INPUT_PULLUP);
+      pinMode(sensorPins[side][i], INPUT_PULLUP);
     }
   }
 
-  recuperarVelocidadeSerialEEPROM();  // Recupera a velocidade da EEPROM
-  Serial.begin(velocidadeSerial);     // Inicializa a serial com a velocidade recuperada
-  recuperarDistanciaSensoresEEPROM(); // Recupera a distância dos sensores da EEPROM
+  retrieveSerialSpeedEEPROM();  // Retrieves speed from EEPROM
+  Serial.begin(serialSpeed);    // Initializes the serial with the retrieved speed
+  retrieveSensorDistanceEEPROM(); // Retrieves sensor distance from EEPROM
 }
 
-int estado = 0; // Estado inicial
-String bufferComando = ""; // Armazena o comando recebido
+int state = 0; // Initial state
+String commandBuffer = ""; // Stores the received command
 
-void verificarComando(char entrada) {
-  switch (estado) {
-    case 0: // Estado inicial
-      if (entrada == '<') {
-        estado = 1; // Vai para o estado de verificação de comando
-        bufferComando = ""; // Limpa o buffer
+void checkCommand(char input) {
+  switch (state) {
+    case 0: // Initial state
+      if (input == '<') {
+        state = 1; // Transition to command verification state
+        commandBuffer = ""; // Clears the buffer
       }
       break;
 
-    case 1: // Verifica se tem "<", indicando que é um comando
-      if (entrada == '>') {
-        executarComando(bufferComando); // Comando completo, processa
-        estado = 0; // Volta ao estado inicial
+    case 1: // Verifies if "<" is present, indicating a command
+      if (input == '>') {
+        executeCommand(commandBuffer); // Complete command, processes it
+        state = 0; // Returns to the initial state
       } 
-      else if (entrada == '<') {
-        estado = 3; // Se "<" aparecer antes de ">", descarta o comando
+      else if (input == '<') {
+        state = 3; // If "<" appears before ">", discard the command
       } 
       else {
-        bufferComando += entrada; // Continua acumulando o comando
+        commandBuffer += input; // Continues accumulating the command
       }
       break;
 
-    case 3: // Descartar tudo antes do "<" anterior
-      if (entrada == '>') {
-        estado = 0; // Volta ao estado inicial após descartar o comando
+    case 3: // Discard everything before the previous "<"
+      if (input == '>') {
+        state = 0; // Returns to the initial state after discarding
       }
       break;
 
     default:
-      estado = 0; // Em qualquer outro caso, reseta para o estado inicial
+      state = 0; // In any other case, resets to the initial state
       break;
   }
 }
 
-void executarComando(String comando) {
-  if (comando.startsWith("s:")) {
-    configurarVelocidadeSerial(comando); 
+void executeCommand(String command) {
+  if (command.startsWith("s:")) {
+    configureSerialSpeed(command); 
   } 
-  else if (comando == "reset") {
-    resetarVelocidade(); 
-    Serial.println("{\"status\":\"OK\",\"message\":\"Sistema resetado.\"}");
+  else if (command == "reset") {
+    resetSpeed(); 
+    Serial.println("{\"status\":\"OK\",\"message\":\"System reset.\"}");
   } 
-  else if (comando == "status") {
-    mostrarRelatorio();
+  else if (command == "status") {
+    showReport();
   } 
-  else if (comando.startsWith("d:")) {
-    configurarDistanciaSensores(comando); // Salva na EEPROM
+  else if (command.startsWith("d:")) {
+    configureSensorDistance(command); // Saves to EEPROM
   } 
   else {
-    Serial.println("{\"status\":\"ERROR\",\"message\":\"Comando desconhecido.\"}");
+    Serial.println("{\"status\":\"ERROR\",\"message\":\"Unknown command.\"}");
   }
 }
 
 void loop() {
   while (Serial.available()) {
-    char entrada = Serial.read();
-    verificarComando(entrada);
+    char input = Serial.read();
+    checkCommand(input);
   }
 
-  verificarInterruptores();
+  checkSwitches();
 
-  if (sistemaAtivo == 1) {
-    digitalWrite(led, HIGH);
-    verificarSequencia(0);  // Lado A
-    verificarSequencia(1);  // Lado B
-    verificarRodagemDuplaSimultanea();
-  } else if (sistemaAtivo == 0) {
-    digitalWrite(led, LOW);
-    calcularVelocidade();
+  if (systemActive == 1) {
+    digitalWrite(ledPin, HIGH);
+    checkSequence(0);  // Side A
+    checkSequence(1);  // Side B
+    checkSimultaneousDoubleWheels();
+  } else if (systemActive == 0) {
+    digitalWrite(ledPin, LOW);
+    calculateSpeed();
   }
 
   delay(2);
 }
 
-// Salva a distância dos sensores na EEPROM
-void salvarDistanciaSensoresEEPROM(float novaDistancia) {
-  EEPROM.put(enderecoDistanciaSensores, novaDistancia);
+// Saves the sensor distance to EEPROM
+void saveSensorDistanceEEPROM(float newDistance) {
+  EEPROM.put(sensorDistanceAddress, newDistance);
 }
 
-// Salva a velocidade da porta serial na EEPROM
-void salvarVelocidadeSerialEEPROM(int novaVelocidade) {
-  EEPROM.put(enderecoVelocidadeSerial, novaVelocidade);
+// Saves the serial port speed to EEPROM
+void saveSerialSpeedEEPROM(int newSpeed) {
+  EEPROM.put(serialSpeedAddress, newSpeed);
 }
 
-// Configura a distância dos sensores a partir do comando
-void configurarDistanciaSensores(String comando) {
-  float novaDistancia = comando.substring(3).toFloat();
-  if (novaDistancia > 0) {
-    distanciaSensores = novaDistancia;
-    salvarDistanciaSensoresEEPROM(novaDistancia); // Salva na EEPROM somente para "d:"
-    Serial.print("{\"status\":\"OK\",\"distancia\":");
-    Serial.print(distanciaSensores);
+// Configures the sensor distance from the command
+void configureSensorDistance(String command) {
+  float newDistance = command.substring(3).toFloat();
+  if (newDistance > 0) {
+    sensorDistance = newDistance;
+    saveSensorDistanceEEPROM(newDistance); // Saves to EEPROM only for "d:"
+    Serial.print("{\"status\":\"OK\",\"distance\":");
+    Serial.print(sensorDistance);
     Serial.println("}");
   } else {
-    Serial.println("{\"status\":\"ERROR\",\"message\":\"Distância inválida.\"}");
+    Serial.println("{\"status\":\"ERROR\",\"message\":\"Invalid distance.\"}");
   }
 }
 
-void configurarVelocidadeSerial(String comando) {
-  char escolha = comando.charAt(3); // Pega o caracter após "<s:"
+void configureSerialSpeed(String command) {
+  char choice = command.charAt(3); // Gets the character after "<s:"
 
-  if (escolha < '1' || escolha > '5') {
-    Serial.println("{\"status\":\"ERROR\",\"message\":\"Opção inválida! Escolha entre 1 a 5.\"}");
+  if (choice < '1' || choice > '5') {
+    Serial.println("{\"status\":\"ERROR\",\"message\":\"Invalid option! Choose between 1 and 5.\"}");
     return;
   }
 
-  switch (escolha) {
+  switch (choice) {
     case '1':
-      velocidadeSerial = 2400;
-      opcao = 1;
+      serialSpeed = 2400;
+      option = 1;
       break;
     case '2':
-      velocidadeSerial = 4800;
-      opcao = 2;
+      serialSpeed = 4800;
+      option = 2;
       break;
     case '3':
-      velocidadeSerial = 9600;
-      opcao = 3;
+      serialSpeed = 9600;
+      option = 3;
       break;
     case '4':
-      velocidadeSerial = 14400;
-      opcao = 4;
+      serialSpeed = 14400;
+      option = 4;
       break;
     case '5':
-      velocidadeSerial = 19200;
-      opcao = 5;
+      serialSpeed = 19200;
+      option = 5;
       break;
   }
 
-  salvarVelocidadeSerialEEPROM(velocidadeSerial);  // Salva a nova velocidade na EEPROM
+  saveSerialSpeedEEPROM(serialSpeed);  // Saves the new speed to EEPROM
 
   Serial.end();
-  Serial.begin(velocidadeSerial);  // Reinicia a comunicação serial com a nova velocidade
+  Serial.begin(serialSpeed);  // Restarts serial communication with the new speed
 
-  Serial.print("{\"status\":\"OK\",\"velocidade\":");
-  Serial.print(velocidadeSerial);
+  Serial.print("{\"status\":\"OK\",\"speed\":");
+  Serial.print(serialSpeed);
   Serial.println("}");
 }
 
+void showReport() {
+  String message = "<\"AX1A\":" + String(axisCounters[0][0]) + 
+                   ",\"AX2A\":" + String(axisCounters[0][1]) +
+                   ",\"DWA\":" + String(doubleWheelCounters[0]) +
+                   ",\"AX1B\":" + String(axisCounters[1][0]) +  
+                   ",\"AX2B\":" + String(axisCounters[1][1]) +
+                   ",\"DWB\":" + String(doubleWheelCounters[1]) + ">";
 
-void mostrarRelatorio() {
-  String mensagem = "<\"EX1A\":" + String(contadoresEixos[0][0]) + 
-                    ",\"EX2A\":" + String(contadoresEixos[0][1]) +
-                    ",\"RDA\":" + String(contadoresRodagemDupla[0]) +
-                    ",\"EX1B\":" + String(contadoresEixos[1][0]) +  
-                    ",\"EX2B\":" + String(contadoresEixos[1][1]) +
-                    ",\"RDB\":" + String(contadoresRodagemDupla[1]) + ">";
+  Serial.println(message);
 
-  Serial.println(mensagem);
+  // Displays the count of sensor presses
+String sensorMessage = "<\"sensor1\":" + String(sensorCount[0]) +
+                       ",\"sensor2\":" + String(sensorCount[1]) +
+                       ",\"sensor3\":" + String(sensorCount[2]) +
+                       ",\"sensor4\":" + String(sensorCount[3]) +
+                       ",\"sensor7\":" + String(sensorCount[4]) +
+                       ",\"sensor8\":" + String(sensorCount[5]) +
+                       ",\"sensor9\":" + String(sensorCount[6]) +
+                       ",\"sensor0\":" + String(sensorCount[7]) + ">";
 
-  // Exibe a contagem de pressionamentos de botões
-  String mensagemBotoes = "<\"botao1\":" + String(contagemBotoes[0]) +
-                          ",\"botao2\":" + String(contagemBotoes[1]) +
-                          ",\"botao3\":" + String(contagemBotoes[2]) +
-                          ",\"botao4\":" + String(contagemBotoes[3]) +
-                          ",\"botao7\":" + String(contagemBotoes[4]) +
-                          ",\"botao8\":" + String(contagemBotoes[5]) +
-                          ",\"botao9\":" + String(contagemBotoes[6]) +
-                          ",\"botao0\":" + String(contagemBotoes[7]) + ">";
+Serial.println(sensorMessage);
 
-  Serial.println(mensagemBotoes);
+  String lcdMessage1 = "A1A:" + String(axisCounters[0][0]) + 
+                       " A2A:" + String(axisCounters[0][1]) +
+                       " DA:" + String(doubleWheelCounters[0]);
 
-    String mensagemLCD = "E1A:" + String(contadoresEixos[0][0]) + 
-                     "E2A:" + String(contadoresEixos[0][1]) +
-                     " RDA:" + String(contadoresRodagemDupla[0]);
+  String lcdMessage2 = "A1B:" + String(axisCounters[1][0]) + 
+                       " A2B:" + String(axisCounters[1][1]) +
+                       " DB:" + String(doubleWheelCounters[1]);
 
-String mensagemLCD2 = "E1B:" + String(contadoresEixos[1][0]) + 
-                      "E2B:" + String(contadoresEixos[1][1]) +
-                      " RDB:" + String(contadoresRodagemDupla[1]);
+  // Displays the first line
+  lcd.setCursor(0, 0);  // Column 0, Row 0
+  lcd.print(lcdMessage1);
 
-// Exibe a primeira linha
-lcd.setCursor(0, 0);  // Coluna 0, Linha 0
-lcd.print(mensagemLCD);
+  // Displays the second line
+  lcd.setCursor(0, 1);  // Column 0, Row 1
+  lcd.print(lcdMessage2);
 
-// Exibe a segunda linha
-lcd.setCursor(0, 1);  // Coluna 0, Linha 1
-lcd.print(mensagemLCD2);
-
-
-  Serial.print("{ \"status\":\"OK\",\"tempoInterruptor\":");
-  Serial.print(duracaoInterruptor);
+  Serial.print("{ \"status\":\"OK\",\"switchDuration\":");
+  Serial.print(switchDuration);
   Serial.println("}");
 
-  // Exibe a velocidade serial atual
-  Serial.print("{ \"status\":\"OK\",\"velocidadeSerial\":");
-  Serial.print(velocidadeSerial);
+  // Displays the current serial speed
+  Serial.print("{ \"status\":\"OK\",\"serialSpeed\":");
+  Serial.print(serialSpeed);
   Serial.println("}");
 }
 
-// Função que verifica a rodagem dupla simultânea
-void verificarRodagemDuplaSimultanea() {
-  for (int lado = 0; lado < 2; lado++) {
-    if (!digitalRead(pinosBotoes[lado][2]) == HIGH && !digitalRead(pinosBotoes[lado][3]) == HIGH) {
-      if (!rodagemDuplaDetectada[lado]) {
-        contadoresRodagemDupla[lado]++;
-        rodagemDuplaDetectada[lado] = true;
-        Serial.print("Rodagem dupla simultânea detectada no lado ");
-        Serial.println(lado == 0 ? "A" : "B");
+// Function to check simultaneous double wheels
+void checkSimultaneousDoubleWheels() {
+  for (int side = 0; side < 2; side++) {
+    if (!digitalRead(sensorPins[side][2]) == HIGH && !digitalRead(sensorPins[side][3]) == HIGH) {
+      if (!doubleWheelDetected[side]) {
+        doubleWheelCounters[side]++;
+        doubleWheelDetected[side] = true;
+        Serial.print("Simultaneous double wheels detected on side ");
+        Serial.println(side == 0 ? "A" : "B");
       }
     } else {
-      rodagemDuplaDetectada[lado] = false;
+      doubleWheelDetected[side] = false;
     }
   }
 }
 
-void verificarInterruptores() {
-  int estadoAtualDMM = !digitalRead(interruptorDMM);
-  int estadoAtualBO = !digitalRead(interruptorBO);
+void checkSwitches() {
+  int currentDMMState = !digitalRead(switchDMM);
+  int currentBOState = !digitalRead(switchBO);
 
-  sistemaAtivo = estadoAtualDMM && estadoAtualBO;
+  systemActive = currentDMMState && currentBOState;
 
-  if (sistemaAtivo && ultimoSistemaAtivo == LOW) {
-    Serial.println("inicio de avance");
-    lcd.print("inicio de avance");
-    inicioTempoInterruptor = millis();
-    resetarVelocidade();
-    velocidadeExibida = false; // Permite calcular novamente quando o sistema estiver ativo
+  if (systemActive && lastSystemActive == LOW) {
+    Serial.println("Start of advance");
+    lcd.print("Start of advance");
+    switchStartTime = millis();
+    resetSpeed();
+    speedDisplayed = false; // Allows recalculating when the system is active
   }
 
-  if (!estadoAtualBO && ultimoSistemaAtivo == HIGH) {
-  duracaoInterruptor = millis() - inicioTempoInterruptor;
-  Serial.println("fim de avance");
-  mostrarRelatorio();
-  salvarDistanciaSensoresEEPROM(distanciaSensores);
-  resetarContagemBotoes();
+  if (!currentBOState && lastSystemActive == HIGH) {
+    switchDuration = millis() - switchStartTime;
+    Serial.println("End of advance");
+    showReport();
+    saveSensorDistanceEEPROM(sensorDistance);
+    resetSensorCounts();
   }
 
-  ultimoSistemaAtivo = sistemaAtivo;
+  lastSystemActive = systemActive;
 }
 
-void resetarContagemBotoes() {
-  // Zera as contagens dos botões
-  memset(contagemBotoes, 0, sizeof(contagemBotoes));
+void resetSensorCounts() {
+  // Resets sensor counts
+  memset(sensorCount, 0, sizeof(sensorCount));
   
-  // Zera as contagens de eixos e rodagem dupla
-  memset(contadoresEixos, 0, sizeof(contadoresEixos));  
-  memset(contadoresRodagemDupla, 0, sizeof(contadoresRodagemDupla));
+  // Resets axis and double wheel counts
+  memset(axisCounters, 0, sizeof(axisCounters));  
+  memset(doubleWheelCounters, 0, sizeof(doubleWheelCounters));
 }
 
-void resetarVelocidade() {
-  // Resetar estados relacionados à velocidade
-  velocidadeExibida = false;
+void resetSpeed() {
+  // Reset states related to speed
+  speedDisplayed = false;
   for (int i = 0; i < 2; i++) {
-    velocidadeComBotaoRodDupla[i][0] = false;
-    velocidadeComBotaoRodDupla[i][1] = false;
+    speedWithDoubleWheelSensor[i][0] = false;
+    speedWithDoubleWheelSensor[i][1] = false;
   }
 }
 
-// Adiciona arrays para armazenar o último tempo de mudança dos botões
-unsigned long ultimoTempoBotaoA[4] = {0, 0, 0, 0};
-unsigned long ultimoTempoBotaoB[4] = {0, 0, 0, 0};
+// Arrays to store the last time the sensors changed
+unsigned long lastSensorTimeA[4] = {0, 0, 0, 0};
+unsigned long lastSensorTimeB[4] = {0, 0, 0, 0};
 
-// Função de debounce para verificar se o botão foi realmente pressionado
-bool debounce(int lado, int botao) {
-  int estadoAtual = !digitalRead(pinosBotoes[lado][botao]);
-  unsigned long tempoAtual = millis();
+// Debounce function to check if the sensor was truly triggered
+bool debounce(int side, int sensor) {
+  int currentState = !digitalRead(sensorPins[side][sensor]);
+  unsigned long currentTime = millis();
 
-  if (estadoAtual != estadosBotoes[lado][botao]) {
-    if (tempoAtual - ultimoTempoBotao[lado][botao] > tempoDebounce) {
-      estadosBotoes[lado][botao] = estadoAtual;
-      ultimoTempoBotao[lado][botao] = tempoAtual;
+  if (currentState != sensorStates[side][sensor]) {
+    if (currentTime - lastSensorTime[side][sensor] > debounceTime) {
+      sensorStates[side][sensor] = currentState;
+      lastSensorTime[side][sensor] = currentTime;
       return true;
     }
   }
@@ -343,85 +344,86 @@ bool debounce(int lado, int botao) {
   return false;
 }
 
-void verificarSequencia(int lado) {
+void checkSequence(int side) {
   for (int i = 0; i < 4; i++) {
-    if (debounce(lado, i)) {
-      if (estadosBotoes[lado][i] == HIGH) {
-        temposBotoes[lado][i] = millis();
-        contagemBotoes[i + (lado == 1 ? 4 : 0)]++;
+    if (debounce(side, i)) {
+      if (sensorStates[side][i] == HIGH) {
+        sensorTimings[side][i] = millis();
+        sensorCount[i + (side == 1 ? 4 : 0)]++;
 
-        if (estadoSequencia[lado] == i) {
-          estadoSequencia[lado]++;
-          Serial.print("# Sequência correta: Botão ");
+        if (sequenceState[side] == i) {
+          sequenceState[side]++;
+          Serial.print("# Correct sequence: Sensor ");
           Serial.print(i + 1);
-          Serial.print(" (lado ");
-          Serial.print(lado == 0 ? "A" : "B");
+          Serial.print(" (side ");
+          Serial.print(side == 0 ? "A" : "B");
           Serial.println(")!");
 
           if (i < 2) {
-            contadoresEixos[lado][i]++;
+            axisCounters[side][i]++;
           }
 
           if (i == 3) {
-            estadoSequencia[lado] = 0;
-            Serial.print("# Rodagem dupla completa no lado ");
-            Serial.println(lado == 0 ? "A" : "B");
+            sequenceState[side] = 0;
+            Serial.print("# Double wheels completed on side ");
+            Serial.println(side == 0 ? "A" : "B");
           }
 
           if (i >= 2) {
-            velocidadeComBotaoRodDupla[lado][i - 2] = true;
+            speedWithDoubleWheelSensor[side][i - 2] = true;
           }
-        } else if (estadoSequencia[lado] > i) {
-          Serial.print("# Retrocesso detectado no lado ");
-          Serial.println(lado == 0 ? "A" : "B");
+        } else if (sequenceState[side] > i) {
+          Serial.print("# Backtracking detected on side ");
+          Serial.println(side == 0 ? "A" : "B");
 
-          if (estadoSequencia[lado] == 2 && contadoresEixos[lado][1] > 0) {
-            contadoresEixos[lado][1]--;
+          if (sequenceState[side] == 2 && axisCounters[side][1] > 0) {
+            axisCounters[side][1]--;
           }
-          if (estadoSequencia[lado] == 1 && contadoresEixos[lado][0] > 0) {
-            contadoresEixos[lado][0]--;
+          if (sequenceState[side] == 1 && axisCounters[side][0] > 0) {
+            axisCounters[side][0]--;
           }
-          estadoSequencia[lado]--;
-          retrocessoDetectado = true;
+          sequenceState[side]--;
+          reverseDetected = true;
         }
       }
     }
   }
 }
 
-void recuperarDistanciaSensoresEEPROM() {
-  EEPROM.get(enderecoDistanciaSensores, distanciaSensores);
-  if (isnan(distanciaSensores) ) {
-    distanciaSensores = 0.4;
+void retrieveSensorDistanceEEPROM() {
+  EEPROM.get(sensorDistanceAddress, sensorDistance);
+  if (isnan(sensorDistance)) {
+    sensorDistance = 0.4;
   }
 }
 
-// Recupera a velocidade serial armazenada na EEPROM
-void recuperarVelocidadeSerialEEPROM() {
-  EEPROM.get(enderecoVelocidadeSerial, velocidadeSerial);
-  if (velocidadeSerial != 2400 && velocidadeSerial != 4800 && 
-      velocidadeSerial != 9600 && velocidadeSerial != 14400 && 
-      velocidadeSerial != 19200) {
-    // Se o valor recuperado não for uma velocidade válida, definir padrão 9600
-    velocidadeSerial = 9600;
+// Retrieves the serial speed stored in EEPROM
+void retrieveSerialSpeedEEPROM() {
+  EEPROM.get(serialSpeedAddress, serialSpeed);
+  if (serialSpeed != 2400 && serialSpeed != 4800 && 
+      serialSpeed != 9600 && serialSpeed != 14400 && 
+      serialSpeed != 19200) {
+    // If the recovered value is not a valid speed, set default 9600
+    serialSpeed = 9600;
   }
 }
 
-void calcularVelocidade() {
-  if (!velocidadeExibida) { // Garante que a velocidade será exibida apenas uma vez
+void calculateSpeed() {
+  if (!speedDisplayed) { // Ensures speed is displayed only once
     for (int i = 0; i < 2; i++) {
-      if (velocidadeComBotaoRodDupla[i][0] && velocidadeComBotaoRodDupla[i][1]) {
-        unsigned long tempoTotal = (i == 0 ? temposBotoes[0][3] : temposBotoes[1][3]) - (i == 0 ? temposBotoes[0][2] : temposBotoes[1][2]);      
-        if (tempoTotal > 0) {
-          float velocidade = distanciaSensores / (tempoTotal / 1000.0);  // Cálculo de velocidade
-          Serial.print("Velocidade lado ");
+      if (speedWithDoubleWheelSensor[i][0] && speedWithDoubleWheelSensor[i][1]) {
+        unsigned long totalTime = (i == 0 ? sensorTimings[0][3] : sensorTimings[1][3]) - 
+                                  (i == 0 ? sensorTimings[0][2] : sensorTimings[1][2]);      
+        if (totalTime > 0) {
+          float speed = sensorDistance / (totalTime / 1000.0);  // Speed calculation
+          Serial.print("Speed side ");
           Serial.print(i == 0 ? "A" : "B");
           Serial.print(": ");
-          Serial.print(velocidade);
+          Serial.print(speed);
           Serial.println(" m/s");
         }
       }
     }
-    velocidadeExibida = true;  // Garante que a velocidade será exibida uma única vez por ciclo
+    speedDisplayed = true;  // Ensures speed is displayed only once per cycle
   }
 }
