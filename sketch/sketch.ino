@@ -4,10 +4,14 @@
 // Pins for LCD
 LiquidCrystal_I2C lcd(0x27,16,2);
 
+int lcdColumns = 16; 
+int lcdRows = 2;    
+int lcdConfigAddress = 16; 
+
 // Combine the sensor pins for Side A and Side B
 const int sensorPins[2][4] = {{7, 8, 9, 10}, // Side A: Axis1, Axis2, DW1, DW2
                               {6, 5, 4, 3}}; // Side B: Axis1, Axis2, DW1, DW2
-
+#define NSIDE 2
 const int switchDMM = 11;
 const int switchBO = 2;
 const int ledPin = 13;
@@ -51,7 +55,10 @@ unsigned long lastSensorTime[2][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}};
 unsigned long debounceTime = 50;
 
 void setup() {
-  lcd.begin(16, 2);
+  EEPROM.get(lcdConfigAddress, lcdColumns);
+  EEPROM.get(lcdConfigAddress + sizeof(int), lcdRows);
+  
+  lcd.begin(lcdColumns, lcdRows);
   lcd.backlight();
   lcd.setCursor(0, 0); // Sets the cursor to the top row
   lcd.print("System"); // Displays "System" on the top row
@@ -124,7 +131,10 @@ void executeCommand(String command) {
     showReport();
   } 
   else if (command.startsWith("d:")) {
-    configureSensorDistance(command); // Saves to EEPROM
+    configureSensorDistance(command);
+  } 
+  else if (command.startsWith("dp:")) { 
+    configureLCD(command);
   } 
   else {
     Serial.println("{\"status\":\"ERROR\",\"message\":\"Unknown command.\"}");
@@ -162,6 +172,11 @@ void saveSerialSpeedEEPROM(int newSpeed) {
   EEPROM.put(serialSpeedAddress, newSpeed);
 }
 
+void saveLCDConfigEEPROM(int columns, int rows) {
+  EEPROM.put(lcdConfigAddress, columns);
+  EEPROM.put(lcdConfigAddress + sizeof(int), rows);
+}
+
 // Configures the sensor distance from the command
 void configureSensorDistance(String command) {
   float newDistance = command.substring(3).toFloat();
@@ -173,6 +188,31 @@ void configureSensorDistance(String command) {
     Serial.println("}");
   } else {
     Serial.println("{\"status\":\"ERROR\",\"message\":\"Invalid distance.\"}");
+  }
+}
+
+void configureLCD(String command) {
+  int commaIndex = command.indexOf(',');
+  if (commaIndex == -1) {
+    Serial.println("{\"status\":\"ERROR\",\"message\":\"Invalid LCD configuration.\"}");
+    return;
+  }
+
+  int newColumns = command.substring(3, commaIndex).toInt();
+  int newRows = command.substring(commaIndex + 1).toInt();
+
+  if (newColumns > 0 && newRows > 0) {
+    lcdColumns = newColumns;
+    lcdRows = newRows;
+    saveLCDConfigEEPROM(newColumns, newRows); 
+    lcd.begin(lcdColumns, lcdRows); 
+    Serial.print("{\"status\":\"OK\",\"lcdColumns\":");
+    Serial.print(lcdColumns);
+    Serial.print(",\"lcdRows\":");
+    Serial.print(lcdRows);
+    Serial.println("}");
+  } else {
+    Serial.println("{\"status\":\"ERROR\",\"message\":\"Invalid dimensions.\"}");
   }
 }
 
@@ -288,7 +328,6 @@ void checkSwitches() {
   systemActive = currentDMMState && currentBOState;
 
   if (systemActive && lastSystemActive == LOW) {
-    Serial.println("Start of advance");
     lcd.print("Start of advance");
     switchStartTime = millis();
     resetSpeed();
